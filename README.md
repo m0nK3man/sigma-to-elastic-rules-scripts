@@ -1,0 +1,1 @@
+# sigma-to-elastic-rules-scripts
