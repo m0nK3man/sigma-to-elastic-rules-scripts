@@ -15,6 +15,8 @@ from pathlib import Path
 
 import yaml
 
+from ui_text import tr
+
 
 PIPELINES = {
     "windows": "ecs_windows",
@@ -106,6 +108,41 @@ def read_rule(path, source_root, collection, additional_tags):
     )
 
 
+def resolve_source(source):
+    source = Path(source).expanduser().resolve()
+    if not source.is_dir():
+        raise ValueError(tr('Source folder does not exist: {path}', path=source))
+    collections = {'rules': 'sigma-core', 'rules-emerging-threats': 'sigma-emerging-threats'}
+    for root in (source, *source.parents):
+        if root.name in collections:
+            return source, root, collections[root.name]
+    raise ValueError(tr('Choose rules, rules-emerging-threats, or a folder inside either: {path}', path=source))
+
+
+def validate_sources(sources, output=None):
+    if not sources:
+        raise ValueError(tr('Add at least one source folder first.'))
+    resolved = []
+    roots = {}
+    for path in sources:
+        source, root, collection = resolve_source(path)
+        for previous, _, _ in resolved:
+            if source == previous or source in previous.parents or previous in source.parents:
+                raise ValueError(tr('These source folders overlap: {first} and {second}', first=previous, second=source))
+        if collection in roots and roots[collection] != root:
+            raise ValueError(tr('Use folders from the same collection root for {collection}.', collection=collection))
+        roots[collection] = root
+        resolved.append((source, root, collection))
+    if output is not None:
+        output = Path(output).expanduser().resolve()
+        for source, _, _ in resolved:
+            if output == source or source in output.parents or output in source.parents:
+                raise ValueError(tr('Source and output folders must not overlap.'))
+        if output.exists() and (not output.is_dir() or any(output.iterdir())):
+            raise ValueError(tr('Choose a new or empty output folder: {path}', path=output))
+    return resolved
+
+
 def prepare_output(output_root):
     if output_root.exists() and any(output_root.iterdir()):
         raise RuntimeError(f"Output directory is not empty: {output_root}")
@@ -114,7 +151,7 @@ def prepare_output(output_root):
         (output_root / name).mkdir()
 
 
-def classify_rules(source_root, output_root, collection, additional_tags):
+def classify_rules(source_root, output_root, collection, additional_tags, collection_root):
     rule_paths = sorted(
         path for path in source_root.rglob("*")
         if path.is_file() and path.suffix.lower() in {".yml", ".yaml"}
@@ -124,7 +161,7 @@ def classify_rules(source_root, output_root, collection, additional_tags):
 
     records = []
     for path in rule_paths:
-        record = read_rule(path, source_root, collection, additional_tags)
+        record = read_rule(path, collection_root, collection, additional_tags)
         records.append(record)
         destination = output_root / "classified" / collection / record.group / record.source
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -367,25 +404,13 @@ def parse_args():
 
 def main():
     args = parse_args()
-    source_roots = [source.resolve() for source in args.source]
-    output_root = args.output.resolve()
-    collections = {"rules": "sigma-core", "rules-emerging-threats": "sigma-emerging-threats"}
+    output_root = args.output.expanduser().resolve()
     try:
-        collection_names = []
-        for source in source_roots:
-            if not source.is_dir():
-                raise RuntimeError(f"Source directory does not exist: {source}")
-            if source.name not in collections:
-                raise RuntimeError(f"Unknown collection directory: {source.name}; expected rules or rules-emerging-threats")
-            if output_root == source or source in output_root.parents or output_root in source.parents:
-                raise RuntimeError("Source and output directories must not overlap")
-            collection_names.append(collections[source.name])
-        if len(set(collection_names)) != len(collection_names):
-            raise RuntimeError("Each collection must be provided once")
+        sources = validate_sources(args.source, output_root)
         prepare_output(output_root)
         records = []
-        for source, collection in zip(source_roots, collection_names):
-            records.extend(classify_rules(source, output_root, collection, unique_tags(args.tag)))
+        for source, collection_root, collection in sources:
+            records.extend(classify_rules(source, output_root, collection, unique_tags(args.tag), collection_root))
         mark_duplicates(records, output_root)
         if args.classify_only:
             for record in records:
