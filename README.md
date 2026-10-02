@@ -1,9 +1,11 @@
 # Sigma Splitter
 
-A terminal tool for selecting Sigma rule folders, converting supported log sources into Elastic Security NDJSON, and importing reviewed bundles through the Kibana API.
+A terminal tool for selecting Sigma rule folders, converting supported sources into Elastic Security NDJSON, and importing reviewed bundles through the Kibana API.
 
 The menu supports English and Vietnamese. Add source folders one at a time, review the current setup, and run conversion or import when ready.
 
+Sources supported:
+- https://github.com/SigmaHQ/sigma/releases
 ## Requirements
 
 - Python 3.10 or newer.
